@@ -1,0 +1,782 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Korre V2.2 — Mapa de oportunidades</title>
+
+  <!--
+    KORRE V2.2 (Ultra Leve)
+    - USA OpenFreeMap + MapLibre GL para o mapa base.
+    - Query Overpass otimizada focando apenas em NODES (resposta em instantes).
+
+    Para executar:
+      python -m http.server 8000
+    Depois:
+      http://localhost:8000/korre-v2-2.html
+  -->
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.css">
+
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      background: #f4f6f8;
+      color: #17202a;
+    }
+
+    header {
+      background: #111827;
+      color: white;
+      padding: 14px 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    header h1 {
+      margin: 0;
+      font-size: 22px;
+    }
+
+    header small {
+      opacity: .8;
+    }
+
+    .controls {
+      background: white;
+      padding: 12px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+      box-shadow: 0 2px 8px rgba(0,0,0,.08);
+      position: relative;
+      z-index: 1000;
+    }
+
+    button, select {
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      padding: 9px 12px;
+      background: white;
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    button:hover {
+      background: #f3f4f6;
+    }
+
+    button.primary {
+      background: #111827;
+      color: white;
+      border-color: #111827;
+    }
+
+    button.primary:hover {
+      background: #1f2937;
+    }
+
+    .status {
+      width: 100%;
+      padding: 8px 12px;
+      border-radius: 8px;
+      background: #eef2ff;
+      color: #3730a3;
+      font-size: 13px;
+    }
+
+    .status.error {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    .status.ok {
+      background: #dcfce7;
+      color: #166534;
+    }
+
+    #map {
+      height: calc(100vh - 205px);
+      min-height: 520px;
+      width: 100%;
+    }
+
+    .dashboard {
+      position: absolute;
+      top: 145px;
+      right: 12px;
+      z-index: 900;
+      width: 235px;
+      background: rgba(255,255,255,.96);
+      border-radius: 12px;
+      box-shadow: 0 3px 14px rgba(0,0,0,.18);
+      padding: 12px;
+    }
+
+    .dashboard h3 {
+      margin: 0 0 9px;
+      font-size: 15px;
+    }
+
+    .stat {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 5px 0;
+      border-bottom: 1px solid #eee;
+      font-size: 13px;
+    }
+
+    .stat:last-child {
+      border-bottom: 0;
+    }
+
+    .legend {
+      position: absolute;
+      left: 12px;
+      bottom: 25px;
+      z-index: 900;
+      background: rgba(255,255,255,.95);
+      border-radius: 10px;
+      padding: 10px;
+      box-shadow: 0 2px 10px rgba(0,0,0,.15);
+      font-size: 12px;
+    }
+
+    .legend-row {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin: 4px 0;
+    }
+
+    .dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      border: 1px solid rgba(0,0,0,.2);
+    }
+
+    .loading {
+      display: none;
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 1200;
+      background: rgba(17,24,39,.92);
+      color: white;
+      padding: 14px 18px;
+      border-radius: 10px;
+      box-shadow: 0 5px 25px rgba(0,0,0,.25);
+    }
+
+    .loading.show {
+      display: block;
+    }
+
+    .popup-title {
+      font-weight: bold;
+      font-size: 15px;
+      margin-bottom: 6px;
+    }
+
+    .popup-line {
+      margin: 3px 0;
+      font-size: 13px;
+    }
+
+    .warning {
+      padding: 10px 12px;
+      background: #fff7ed;
+      color: #9a3412;
+      font-size: 12px;
+      border-top: 1px solid #fed7aa;
+    }
+
+    @media (max-width: 700px) {
+      .dashboard {
+        top: auto;
+        bottom: 65px;
+        right: 8px;
+        width: 205px;
+      }
+
+      #map {
+        height: calc(100vh - 255px);
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <div>
+      <h1>🏍️ Korre V2.2</h1>
+      <small>Mapa de oportunidades para entregadores</small>
+    </div>
+    <small>Protótipo</small>
+  </header>
+
+  <div class="controls">
+    <button id="btnLocation">📍 Minha localização</button>
+    <button id="btnSearch" class="primary">🔎 Buscar estabelecimentos</button>
+    <button id="btnOpportunity">🔥 Calcular oportunidades</button>
+    <button id="btnClear">🗑️ Limpar</button>
+
+    <label>
+      Raio:
+      <select id="radius">
+        <option value="1000">1 km</option>
+        <option value="2000" selected>2 km</option>
+        <option value="3000">3 km</option>
+        <option value="5000">5 km</option>
+      </select>
+    </label>
+
+    <label>
+      Grade:
+      <select id="gridSize">
+        <option value="250">250 m</option>
+        <option value="400" selected>400 m</option>
+        <option value="600">600 m</option>
+      </select>
+    </label>
+
+    <div id="status" class="status">
+      Mapa carregado. Clique em “Minha localização” ou escolha uma área no mapa.
+    </div>
+  </div>
+
+  <div id="map"></div>
+
+  <div class="dashboard">
+    <h3>📊 Resumo Korre</h3>
+    <div class="stat"><span>Estabelecimentos</span><strong id="total">0</strong></div>
+    <div class="stat"><span>Restaurantes</span><strong id="restaurants">0</strong></div>
+    <div class="stat"><span>Fast food</span><strong id="fastfood">0</strong></div>
+    <div class="stat"><span>Outros</span><strong id="other">0</strong></div>
+    <div class="stat"><span>Maior concentração</span><strong id="maxScore">0</strong></div>
+  </div>
+
+  <div class="legend">
+    <strong>Índice Korre — concentração</strong>
+    <div class="legend-row"><span class="dot" style="background:#ef4444"></span> Muito alta</div>
+    <div class="legend-row"><span class="dot" style="background:#f97316"></span> Alta</div>
+    <div class="legend-row"><span class="dot" style="background:#eab308"></span> Média</div>
+    <div class="legend-row"><span class="dot" style="background:#22c55e"></span> Baixa</div>
+    <div class="legend-row"><span class="dot" style="background:#3b82f6"></span> Muito baixa</div>
+  </div>
+
+  <div id="loading" class="loading">🔎 Buscando estabelecimentos...</div>
+
+  <div class="warning">
+    O índice mostrado nesta versão mede concentração de estabelecimentos. Ele NÃO representa quantidade real de pedidos.
+    A versão futura poderá combinar pedidos históricos, horário, dia da semana e concorrência de entregadores.
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js"></script>
+  <script src="https://unpkg.com/@maplibre/maplibre-gl-leaflet/leaflet-maplibre-gl.js"></script>
+
+  <script>
+    const DEFAULT_CENTER = [-8.0200, -34.9000]; // área geral Recife/Olinda
+    const DEFAULT_ZOOM = 13;
+
+    // Servidores Overpass para redundância
+    const OVERPASS_ENDPOINTS = [
+      "https://overpass-api.de/api/interpreter",
+      "https://overpass.kumi.systems/api/interpreter",
+      "https://overpass.private.coffee/api/interpreter"
+    ];
+
+    const OPENFREEMAP_STYLE = "https://tiles.openfreemap.org/styles/liberty";
+
+    const map = L.map("map", {
+      zoomControl: true
+    }).setView(DEFAULT_CENTER, DEFAULT_ZOOM);
+
+    L.maplibreGL({
+      style: OPENFREEMAP_STYLE
+    }).addTo(map);
+
+    let userMarker = null;
+    let accuracyCircle = null;
+    let stores = [];
+    let storeMarkers = [];
+    let gridLayers = [];
+    let opportunityMarker = null;
+
+    function setStatus(message, type = "") {
+      const el = document.getElementById("status");
+      el.textContent = message;
+      el.className = "status " + type;
+    }
+
+    function setLoading(show) {
+      document.getElementById("loading").classList.toggle("show", show);
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function categoryInfo(tags = {}) {
+      if (tags.amenity === "restaurant") {
+        return { label: "Restaurante", color: "#dc2626" };
+      }
+      if (tags.amenity === "fast_food") {
+        return { label: "Fast food", color: "#f97316" };
+      }
+      if (tags.amenity === "cafe") {
+        return { label: "Café", color: "#8b5cf6" };
+      }
+      if (tags.amenity === "ice_cream") {
+        return { label: "Sorveteria", color: "#ec4899" };
+      }
+      if (tags.amenity === "bakery") {
+        return { label: "Padaria", color: "#ca8a04" };
+      }
+      if (tags.shop === "convenience" || tags.shop === "supermarket") {
+        return { label: "Conveniência/Mercado", color: "#2563eb" };
+      }
+      return { label: "Estabelecimento", color: "#64748b" };
+    }
+
+    function getElementLatLng(element) {
+      if (typeof element.lat === "number" && typeof element.lon === "number") {
+        return [element.lat, element.lon];
+      }
+      return null;
+    }
+
+    function distanceMeters(lat1, lon1, lat2, lon2) {
+      const R = 6371000;
+      const p1 = lat1 * Math.PI / 180;
+      const p2 = lat2 * Math.PI / 180;
+      const dp = (lat2 - lat1) * Math.PI / 180;
+      const dl = (lon2 - lon1) * Math.PI / 180;
+
+      const a =
+        Math.sin(dp / 2) ** 2 +
+        Math.cos(p1) * Math.cos(p2) *
+        Math.sin(dl / 2) ** 2;
+
+      return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
+    function formatDistance(meters) {
+      if (meters < 1000) return Math.round(meters) + " m";
+      return (meters / 1000).toFixed(1) + " km";
+    }
+
+    function clearStoreMarkers() {
+      storeMarkers.forEach(marker => map.removeLayer(marker));
+      storeMarkers = [];
+    }
+
+    function clearGrid() {
+      gridLayers.forEach(layer => map.removeLayer(layer));
+      gridLayers = [];
+
+      if (opportunityMarker) {
+        map.removeLayer(opportunityMarker);
+        opportunityMarker = null;
+      }
+    }
+
+    function updateStats() {
+      let restaurants = 0;
+      let fastfood = 0;
+
+      stores.forEach(store => {
+        if (store.category === "Restaurante") restaurants++;
+        else if (store.category === "Fast food") fastfood++;
+      });
+
+      document.getElementById("total").textContent = stores.length;
+      document.getElementById("restaurants").textContent = restaurants;
+      document.getElementById("fastfood").textContent = fastfood;
+      document.getElementById("other").textContent =
+        Math.max(0, stores.length - restaurants - fastfood);
+    }
+
+    function createStoreMarker(store) {
+      const icon = L.divIcon({
+        className: "",
+        html: `
+          <div style="
+            width:20px;
+            height:20px;
+            border-radius:50%;
+            background:${store.color};
+            border:3px solid white;
+            box-shadow:0 2px 5px rgba(0,0,0,.35);
+          "></div>
+        `,
+        iconSize: [20, 20],
+        iconAnchor: [10, 10]
+      });
+
+      const marker = L.marker([store.lat, store.lon], { icon });
+
+      const tags = store.tags || {};
+      const addressParts = [
+        tags["addr:street"],
+        tags["addr:housenumber"],
+        tags["addr:suburb"]
+      ].filter(Boolean);
+
+      const address = addressParts.join(", ");
+
+      marker.bindPopup(`
+        <div class="popup-title">${escapeHtml(store.name)}</div>
+        <div class="popup-line"><b>Categoria:</b> ${escapeHtml(store.category)}</div>
+        <div class="popup-line"><b>Distância:</b> ${escapeHtml(formatDistance(store.distance))}</div>
+        ${address ? `<div class="popup-line"><b>Endereço:</b> ${escapeHtml(address)}</div>` : ""}
+        ${tags.phone ? `<div class="popup-line"><b>Telefone:</b> ${escapeHtml(tags.phone)}</div>` : ""}
+        ${tags.website ? `<div class="popup-line"><b>Site:</b> ${escapeHtml(tags.website)}</div>` : ""}
+        <div class="popup-line"><b>Fonte:</b> OpenStreetMap</div>
+      `);
+
+      marker.addTo(map);
+      storeMarkers.push(marker);
+    }
+
+    function showUserLocation(position) {
+      const lat = position.coords.latitude;
+      const lon = position.coords.longitude;
+      const accuracy = position.coords.accuracy || 50;
+
+      if (userMarker) map.removeLayer(userMarker);
+      if (accuracyCircle) map.removeLayer(accuracyCircle);
+
+      userMarker = L.marker([lat, lon]).addTo(map)
+        .bindPopup("📍 Sua localização aproximada")
+        .openPopup();
+
+      accuracyCircle = L.circle([lat, lon], {
+        radius: accuracy,
+        color: "#2563eb",
+        fillOpacity: 0.08,
+        weight: 1
+      }).addTo(map);
+
+      map.setView([lat, lon], 15);
+
+      setStatus("Localização encontrada. Agora clique em “Buscar estabelecimentos”.", "ok");
+    }
+
+    function getSearchCenter() {
+      if (userMarker) {
+        return userMarker.getLatLng();
+      }
+
+      const center = map.getCenter();
+      return {
+        lat: center.lat,
+        lng: center.lng
+      };
+    }
+
+    async function fetchOverpassData(query) {
+      for (const endpoint of OVERPASS_ENDPOINTS) {
+        try {
+          const response = await fetch(endpoint, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"
+            },
+            body: "data=" + encodeURIComponent(query)
+          });
+
+          if (response.ok) {
+            return await response.json();
+          }
+        } catch (error) {
+          console.warn(`Servidor Overpass (${endpoint}) falhou, tentando o próximo...`);
+        }
+      }
+      throw new Error("Todos os servidores Overpass estão indisponíveis no momento.");
+    }
+
+    async function searchStores() {
+      const center = getSearchCenter();
+      const radius = Number(document.getElementById("radius").value);
+
+      setLoading(true);
+      setStatus("Consultando estabelecimentos na região...");
+
+      clearStoreMarkers();
+      clearGrid();
+      stores = [];
+      updateStats();
+
+      // Query Ultra Leve: Busca apenas NODES (pontos) com regex
+      const query = `
+        [out:json][timeout:10];
+        (
+          node["amenity"~"restaurant|fast_food|cafe|ice_cream|bakery"](around:${radius},${center.lat},${center.lng});
+          node["shop"~"convenience|supermarket"](around:${radius},${center.lat},${center.lng});
+        );
+        out body;
+      `;
+
+      try {
+        const data = await fetchOverpassData(query);
+        const unique = new Map();
+
+        for (const element of (data.elements || [])) {
+          const pos = getElementLatLng(element);
+          if (!pos) continue;
+
+          const tags = element.tags || {};
+          const name = tags.name || "Estabelecimento sem nome";
+          const info = categoryInfo(tags);
+
+          const key = `${element.type}/${element.id}`;
+
+          if (!unique.has(key)) {
+            unique.set(key, {
+              id: key,
+              name,
+              lat: pos[0],
+              lon: pos[1],
+              tags,
+              category: info.label,
+              color: info.color,
+              distance: distanceMeters(center.lat, center.lng, pos[0], pos[1])
+            });
+          }
+        }
+
+        stores = Array.from(unique.values())
+          .sort((a, b) => a.distance - b.distance);
+
+        stores.forEach(createStoreMarker);
+        updateStats();
+
+        if (!stores.length) {
+          setStatus("Nenhum estabelecimento encontrado. Tente aumentar o raio.", "error");
+        } else {
+          setStatus(
+            `${stores.length} estabelecimentos encontrados em ${radius / 1000} km.`,
+            "ok"
+          );
+        }
+
+      } catch (error) {
+        console.error(error);
+        setStatus(
+          "Não foi possível consultar os estabelecimentos. Os servidores estão indisponíveis ou ocupados. Tente novamente em instantes.",
+          "error"
+        );
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    function getGridColor(score) {
+      if (score >= 80) return "#ef4444";
+      if (score >= 60) return "#f97316";
+      if (score >= 40) return "#eab308";
+      if (score >= 20) return "#22c55e";
+      return "#3b82f6";
+    }
+
+    function calculateOpportunities() {
+      if (!stores.length) {
+        setStatus("Primeiro busque os estabelecimentos.", "error");
+        return;
+      }
+
+      clearGrid();
+
+      const center = getSearchCenter();
+      const radius = Number(document.getElementById("radius").value);
+      const gridMeters = Number(document.getElementById("gridSize").value);
+
+      const latStep = gridMeters / 111320;
+      const lonStep = gridMeters / (111320 * Math.cos(center.lat * Math.PI / 180));
+
+      const minLat = center.lat - radius / 111320;
+      const maxLat = center.lat + radius / 111320;
+      const minLon = center.lng - radius / (111320 * Math.cos(center.lat * Math.PI / 180));
+      const maxLon = center.lng + radius / (111320 * Math.cos(center.lat * Math.PI / 180));
+
+      const cells = [];
+
+      for (let lat = minLat; lat < maxLat; lat += latStep) {
+        for (let lon = minLon; lon < maxLon; lon += lonStep) {
+          const cellCenterLat = lat + latStep / 2;
+          const cellCenterLon = lon + lonStep / 2;
+
+          const distanceFromCenter = distanceMeters(
+            center.lat,
+            center.lng,
+            cellCenterLat,
+            cellCenterLon
+          );
+
+          if (distanceFromCenter > radius) continue;
+
+          const cellStores = stores.filter(store => {
+            return store.lat >= lat &&
+                   store.lat < lat + latStep &&
+                   store.lon >= lon &&
+                   store.lon < lon + lonStep;
+          });
+
+          cells.push({
+            lat,
+            lon,
+            count: cellStores.length,
+            centerLat: cellCenterLat,
+            centerLon: cellCenterLon
+          });
+        }
+      }
+
+      const maxCount = Math.max(1, ...cells.map(c => c.count));
+
+      let best = null;
+
+      cells.forEach(cell => {
+        const score = Math.round((cell.count / maxCount) * 100);
+        cell.score = score;
+
+        const color = getGridColor(score);
+
+        const rectangle = L.rectangle(
+          [
+            [cell.lat, cell.lon],
+            [cell.lat + latStep, cell.lon + lonStep]
+          ],
+          {
+            color,
+            weight: 1,
+            fillColor: color,
+            fillOpacity: 0.20
+          }
+        ).addTo(map);
+
+        rectangle.bindPopup(`
+          <div class="popup-title">🔥 Área Korre</div>
+          <div class="popup-line"><b>Estabelecimentos:</b> ${cell.count}</div>
+          <div class="popup-line"><b>Índice de concentração:</b> ${score}/100</div>
+          <div class="popup-line"><b>Grade:</b> ${gridMeters} m</div>
+          <div class="popup-line"><small>Não representa pedidos reais.</small></div>
+        `);
+
+        gridLayers.push(rectangle);
+
+        if (!best || cell.count > best.count) {
+          best = cell;
+        }
+      });
+
+      if (best && best.count > 0) {
+        opportunityMarker = L.marker([best.centerLat, best.centerLon], {
+          icon: L.divIcon({
+            className: "",
+            html: `
+              <div style="
+                font-size:30px;
+                filter: drop-shadow(0 2px 2px rgba(0,0,0,.35));
+              ">🔥</div>
+            `,
+            iconSize: [35, 35],
+            iconAnchor: [17, 30]
+          })
+        }).addTo(map);
+
+        opportunityMarker.bindPopup(`
+          <div class="popup-title">🔥 Maior concentração encontrada</div>
+          <div class="popup-line"><b>Estabelecimentos:</b> ${best.count}</div>
+          <div class="popup-line"><b>Índice:</b> 100/100</div>
+          <div class="popup-line"><small>Este índice considera somente a concentração cadastrada no mapa.</small></div>
+        `);
+
+        document.getElementById("maxScore").textContent = "100";
+        setStatus(
+          `Mapa de concentração calculado. A área marcada com 🔥 possui ${best.count} estabelecimentos.`,
+          "ok"
+        );
+      } else {
+        document.getElementById("maxScore").textContent = "0";
+        setStatus("Não foi possível calcular uma área de concentração.", "error");
+      }
+    }
+
+    function clearAll() {
+      clearStoreMarkers();
+      clearGrid();
+
+      stores = [];
+      updateStats();
+      document.getElementById("maxScore").textContent = "0";
+
+      if (userMarker) {
+        map.removeLayer(userMarker);
+        userMarker = null;
+      }
+
+      if (accuracyCircle) {
+        map.removeLayer(accuracyCircle);
+        accuracyCircle = null;
+      }
+
+      setStatus("Mapa limpo. Você pode iniciar uma nova busca.");
+    }
+
+    document.getElementById("btnLocation").addEventListener("click", () => {
+      if (!navigator.geolocation) {
+        setStatus("Seu navegador não disponibiliza geolocalização.", "error");
+        return;
+      }
+
+      setStatus("Obtendo sua localização...");
+
+      navigator.geolocation.getCurrentPosition(
+        showUserLocation,
+        error => {
+          console.error(error);
+          setStatus(
+            "Não foi possível obter sua localização. Verifique a permissão do navegador.",
+            "error"
+          );
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: 15000,
+          maximumAge: 30000
+        }
+      );
+    });
+
+    document.getElementById("btnSearch").addEventListener("click", searchStores);
+    document.getElementById("btnOpportunity").addEventListener("click", calculateOpportunities);
+    document.getElementById("btnClear").addEventListener("click", clearAll);
+
+    map.on("click", event => {
+      setStatus(
+        `Área selecionada: ${event.latlng.lat.toFixed(5)}, ${event.latlng.lng.toFixed(5)}. Você pode buscar estabelecimentos a partir desse ponto.`,
+        "ok"
+      );
+    });
+  </script>
+</body>
+</html>
